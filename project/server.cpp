@@ -6,6 +6,11 @@
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <iostream>
+#include <cstdlib>
+#include <ctime>
+
+using namespace std;
 
 int main(int argc, char** argv) {
     if (argc < 2) {
@@ -24,7 +29,8 @@ int main(int argc, char** argv) {
     server_addr.sin_port = htons(PORT); // Big endian
 
     /* Let operating system know about our config */
-    int did_bind = bind(sockfd, (struct sockaddr*) &server_addr, sizeof(server_addr));
+                    // not std::bind()
+    int did_bind = ::bind(sockfd, (struct sockaddr*) &server_addr, sizeof(server_addr));
 
     struct sockaddr_in client_addr; // Same information, but about client
     socklen_t s = sizeof(struct sockaddr_in);

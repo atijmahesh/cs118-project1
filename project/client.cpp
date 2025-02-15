@@ -7,6 +7,11 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <iostream>
+#include <cstdlib>
+#include <ctime>
+
+using namespace std;
 
 int main(int argc, char** argv) {
     if (argc < 3) {
@@ -27,6 +32,8 @@ int main(int argc, char** argv) {
     // Set sending port
     int PORT = atoi(argv[2]);
     server_addr.sin_port = htons(PORT); // Big endian
+
+    srand(time(nullptr)); // pass in a constant param to `srand` for determinism (debugging)
 
     init_io();
     listen_loop(sockfd, &server_addr, CLIENT, input_io, output_io);

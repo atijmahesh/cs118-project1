@@ -7,6 +7,7 @@
 
 // Maximum payload size
 #define MAX_PAYLOAD 1012
+#define BUF_SIZE sizeof(packet) + MAX_PAYLOAD
 
 // Retransmission time
 #define TV_DIFF(end, start)                                                    \

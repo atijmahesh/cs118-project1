@@ -1,6 +1,6 @@
 CXX=g++
 CPPFLAGS=-Wall -Wextra 
-LDFLAGS= 
+LDFLAGS=
 LDLIBS=
 
 SRCS := $(wildcard *.cpp)
@@ -11,8 +11,10 @@ DEPS=$(PRE_DEPS:%.cpp=%.o)
 all: server client 
 
 server: server.o $(DEPS)
+	$(CXX) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
 client: client.o $(DEPS)
+	$(CXX) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 clean:
 	@rm -rf server client *.bin *.o
-
