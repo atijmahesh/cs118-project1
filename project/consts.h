@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <fcntl.h>
 
 // Maximum payload size
 #define MAX_PAYLOAD 1012
@@ -30,6 +31,7 @@
 #define SYN 0b001
 #define ACK 0b010
 #define PARITY 0b100
+#define NO_PARITY 0b000
 
 // Diagnostic messages
 #define RECV 0
@@ -110,3 +112,22 @@ static inline void print_diag(packet* pkt, int diag) {
     fprintf(stderr, "\n");
 }
 
+static void init_fd(int sock_fd) {
+    int flags = fcntl(sock_fd, F_GETFL);
+    flags |= O_NONBLOCK;
+    fcntl(sock_fd, F_SETFL, flags);
+}
+
+static inline uint8_t calc_pbit(packet* pkt) {
+    uint8_t* data = reinterpret_cast<uint8_t*>(pkt);
+    uint8_t parity = 0;
+    int len = sizeof(packet) + MIN(MAX_PAYLOAD, ntohs(pkt->length));
+    for (int i = 0; i < len; ++i) {
+        uint8_t byte = data[i];
+        for (int b = 0; b < 8; ++b)
+            parity ^= (byte >> b) & 1;
+    }
+    return parity;
+}
+
+static inline uint8_t set_parity(packet* pkt) { return calc_pbit(pkt) ? PARITY : NO_PARITY; }

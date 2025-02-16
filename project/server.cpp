@@ -17,6 +17,8 @@ int main(int argc, char** argv) {
         fprintf(stderr, "Usage: server <port>\n");
         exit(1);
     }
+
+    srand(time(nullptr)); // pass in a constant param to `srand` for determinism (debugging)
                         // use IPv4  use UDP
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
 

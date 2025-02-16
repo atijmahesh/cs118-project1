@@ -19,9 +19,9 @@ int main(int argc, char** argv) {
         exit(1);
     }
 
-    /* Create sockets */
+    srand(time(nullptr)); // pass in a constant param to `srand` for determinism (debugging)
+                        // use IPv4  use UDP
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-    // use IPv4  use UDP
 
     /* Construct server address */
     struct sockaddr_in server_addr;
@@ -32,9 +32,7 @@ int main(int argc, char** argv) {
     // Set sending port
     int PORT = atoi(argv[2]);
     server_addr.sin_port = htons(PORT); // Big endian
-
-    srand(time(nullptr)); // pass in a constant param to `srand` for determinism (debugging)
-
+    
     init_io();
     listen_loop(sockfd, &server_addr, CLIENT, input_io, output_io);
 
