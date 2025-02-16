@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <cstdlib>
 #include <ctime>
+#include <iostream>
 #include "consts.h"
 
 using namespace std;
@@ -15,7 +16,7 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
     size_t payload_size = 0;
 
     if (type == CLIENT) {
-        // step 1: client sends SYN packet to server
+        // step 1: client sends SYN packet to server to initiate handshake
         uint16_t client_seq = (rand() % 1000) + 1;
         pkt->seq = htons(client_seq);
         pkt->ack = 0;
@@ -32,6 +33,30 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
         sendto(sockfd, pkt, sizeof(packet) + payload_size, 0, (struct sockaddr*) addr, addr_len);
         print_diag(pkt, SEND);
 
+        // step 4: client receives SYN-ACK from server (client now unblocked)
+        recvfrom(sockfd, pkt, BUF_SIZE, 0, (struct sockaddr*) addr, &addr_len);
+        print_diag(pkt, RECV);
+        if (!(pkt->flags & SYN) || !(pkt->flags & ACK)) {
+            print("Expected SYN-ACK packet. Dropping...\n");
+            exit(1);
+        }
+
+        // step 5: client sends ACK to server to complete handshake
+        uint16_t server_seq = ntohs(pkt->seq);
+        pkt->seq = htons(client_seq + 1);
+        pkt->ack = htons(server_seq + 1);
+
+        // read payload data (if available)
+        payload_size = input_p(pkt->payload, MAX_PAYLOAD);
+        pkt->length = htons(payload_size);
+
+        pkt->win = htons(MIN_WINDOW);
+        pkt->flags = ACK | set_parity(pkt);
+        pkt->unused = 0;
+
+        // send final ACK packet to server (handshake complete)
+        sendto(sockfd, pkt, sizeof(packet) + payload_size, 0, (struct sockaddr*) addr, addr_len);
+        print_diag(pkt, SEND);
     } else if (type == SERVER) {
         // step 2: server receives SYN packet from client
 
@@ -61,6 +86,7 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
         sendto(sockfd, pkt, sizeof(packet) + payload_size, 0, (struct sockaddr*) addr, addr_len);
         print_diag(pkt, SEND);
     }
+
     while (true) {
 
     }
