@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <map>
 #include <set>
+#include <cstring>
 #include "consts.h"
 
 using namespace std;
@@ -105,6 +106,7 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
         ack_num = client_seq + 1;
     }
 
+    cout << "[Post-handshake] Starting main loop with seq_num=" << seq_num << ", ack_num=" << ack_num << endl;
     unordered_map<uint16_t, packet> send_buf; // stores unACKed packets
     map<uint16_t, packet> recv_buf; // stores out-of-order packets
     uint16_t window_size = MIN_WINDOW; // window size, static for now (TODO: implement flow control)
@@ -112,66 +114,76 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
     while (true) {
         // receive packet from sender
         int bytes_recvd = recvfrom(sockfd, pkt, BUF_SIZE, 0, (struct sockaddr*) addr, &addr_len);
-        if (bytes_recvd <= 0) continue;
-        
-        print_diag(pkt, RECV);
-        
-        if (calc_pbit(pkt) != 0) { // parity check
-            print("Corrupt packet detected. Dropping...\n");
-            continue;
-        }
+        if (bytes_recvd > 0) {
+            cout << "[MainLoop] Received " << bytes_recvd << " bytes from socket" << endl;
+            print_diag(pkt, RECV);
+            if (calc_pbit(pkt) == 0) {
+                uint16_t pkt_ack = ntohs(pkt->ack);
+                if (pkt->flags & ACK) {
+                    cout << "[MainLoop] Packet has ACK=" << pkt_ack << ". Removing from send_buf." << endl;
+                    auto it = send_buf.begin();
+                    while (it != send_buf.end()) {
+                        if (it->first < pkt_ack)
+                            it = send_buf.erase(it);
+                        else
+                            it++;
+                    }
+                }
 
-        // if received packet is an ACK, remove all packets from send buffer up to (but not including) ACK number
-        if (pkt->flags & ACK) {
-            uint16_t pkt_ack = ntohs(pkt->ack);
-            auto it = send_buf.begin();
-            while (it != send_buf.end()) {
-                if (it->first < pkt_ack)
-                    it = send_buf.erase(it);
-                else
-                    it++;
+                uint16_t pkt_seq = ntohs(pkt->seq);
+                uint16_t pkt_len = ntohs(pkt->length);
+                window_size = ntohs(pkt->win);
+
+                if (pkt_len > 0) {
+                    cout << "[MainLoop] Packet has " << pkt_len << " bytes of payload." << endl;
+                    if (pkt_seq == ack_num) {
+                        cout << "  -> in-order data, delivering to stdout" << endl;
+                        output_p(pkt->payload, pkt_len);
+                        ++ack_num;
+                        while (recv_buf.find(ack_num) != recv_buf.end()) {
+                            packet &buf_pkt = recv_buf[ack_num];
+                            uint16_t buf_len = ntohs(buf_pkt.length);
+                            cout << "  -> delivering out-of-order packet seq=" << ack_num << " with length=" << buf_len << endl;
+                            output_p(buf_pkt.payload, buf_len);
+                            recv_buf.erase(ack_num);
+                            ++ack_num;
+                        }
+
+                        packet ack_pkt = {};
+                        ack_pkt.seq = htons(seq_num);
+                        ack_pkt.ack = htons(ack_num);
+                        ack_pkt.length = 0;
+                        ack_pkt.win = htons(window_size);
+                        ack_pkt.flags = ACK;
+                        ack_pkt.flags |= set_parity(&ack_pkt);
+
+                        sendto(sockfd, &ack_pkt, sizeof(packet), 0, (struct sockaddr*) addr, addr_len);
+                        cout << "[MainLoop] Sent ACK (seq=" << seq_num << ", ack=" << ack_num << ")" << endl;
+                        print_diag(&ack_pkt, SEND);
+                    }
+                    else if (pkt_seq > ack_num)
+                        recv_buf[pkt_seq] = *pkt;
+                }
             }
         }
-
-        uint16_t pkt_seq = ntohs(pkt->seq);
-        uint16_t pkt_len = ntohs(pkt->length);
-        window_size = ntohs(pkt->win);
         
-        // process in-order packets
-        if (pkt_seq == ack_num) {
-            output_p(pkt->payload, pkt_len);
-            ++ack_num; // expected seq # moves forward
-            // process buffered out-of-order packets that might now be in-order
-            while (recv_buf.find(ack_num) != recv_buf.end()) {
-                output_p(recv_buf[ack_num].payload, ntohs(recv_buf[ack_num].length));
-                recv_buf.erase(ack_num);
-                ++ack_num;
+        if (send_buf.size() < (window_size / MAX_PAYLOAD)) {
+            uint8_t buffer[BUF_SIZE] = {0};
+            packet* p = reinterpret_cast<packet*>(buffer);
+            uint16_t n = input_p(p->payload, MAX_PAYLOAD);
+            if (n > 0) {
+                p->seq = htons(seq_num);
+                p->ack = htons(ack_num);
+                p->length = htons(n);
+                p->win = htons(window_size);
+                p->flags = 0;
+                p->flags |= set_parity(p);
+                send_buf[seq_num] = *p;
+                sendto(sockfd, p, sizeof(packet) + n, 0, (struct sockaddr*) addr, addr_len);
+                cout << "[MainLoop] Sent data packet seq=" << seq_num << ", ack=" << ack_num << ", length=" << n << endl;
+                print_diag(p, SEND);
+                ++seq_num;
             }
-        }
-        // buffer out-of-order packets
-        else if (pkt_seq > ack_num)
-            recv_buf[pkt_seq] = *pkt;
-
-        // send new data if window is not full
-        while (send_buf.size() < window_size / MAX_PAYLOAD) {
-            packet new_pkt = {};
-            new_pkt.seq = htons(seq_num);
-            new_pkt.ack = htons(ack_num);
-            
-            // read from stdin into payload
-            payload_size = input_p(new_pkt.payload, MAX_PAYLOAD);
-            if (payload_size <= 0) break; // no more data to send
-
-            new_pkt.length = htons(payload_size);
-            new_pkt.win = htons(window_size);
-            new_pkt.flags = set_parity(&new_pkt);
-
-             // store packet in send buffer then send it
-            send_buf[seq_num] = new_pkt;
-            sendto(sockfd, &new_pkt, sizeof(packet) + payload_size, 0, (struct sockaddr*) addr, addr_len);
-            print_diag(&new_pkt, SEND);
-
-            ++seq_num;
         }
     }
 }
