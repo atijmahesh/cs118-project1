@@ -132,6 +132,23 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
                     it++;
             }
         }
+
+        uint16_t pkt_seq = ntohs(pkt->seq);
+        uint16_t pkt_len = ntohs(pkt->length);
         
+        // process in-order packets
+        if (pkt_seq == ack_num) {
+            output_p(pkt->payload, pkt_len);
+            ++ack_num; // expected seq # moves forward
+            // process buffered out-of-order packets that might now be in-order
+            while (recv_buf.find(ack_num) != recv_buf.end()) {
+                output_p(recv_buf[ack_num].payload, ntohs(recv_buf[ack_num].length));
+                recv_buf.erase(ack_num);
+                ++ack_num;
+            }
+        }
+        // buffer out-of-order packets
+        else if (pkt_seq > ack_num)
+            recv_buf[pkt_seq] = *pkt;
     }
 }
