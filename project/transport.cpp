@@ -112,7 +112,7 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
     while (true) {
         // receive packet from sender
         int bytes_recvd = recvfrom(sockfd, pkt, BUF_SIZE, 0, (struct sockaddr*) addr, &addr_len);
-        if (bytes_recvd < 0) continue;
+        if (bytes_recvd <= 0) continue;
         
         print_diag(pkt, RECV);
         
@@ -160,7 +160,7 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
             
             // read from stdin into payload
             payload_size = input_p(new_pkt.payload, MAX_PAYLOAD);
-            if (payload_size == 0) break; // no more data to send
+            if (payload_size <= 0) break; // no more data to send
 
             new_pkt.length = htons(payload_size);
             new_pkt.win = htons(window_size);
@@ -175,3 +175,113 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
         }
     }
 }
+
+
+/*
+void listen_loop(int sockfd, struct sockaddr_in* addr, int type,ssize_t (*input_p)(uint8_t*, size_t), void (*output_p)(uint8_t*, size_t)) {
+    uint8_t buffer[BUF_SIZE] = {0};
+    packet* pkt = reinterpret_cast<packet*>(buffer);
+    socklen_t addr_len = sizeof(struct sockaddr_in);
+    size_t payload_size = 0;
+    uint16_t client_seq = 0, server_seq = 0;
+
+    if (type == CLIENT) {
+        // step 1: client sends SYN packet to server to initiate handshake
+        client_seq = (rand() % 1000) + 1;
+        pkt->seq = htons(client_seq);
+        pkt->ack = 0;
+
+        // read payload data (if available)
+        payload_size = input_p(pkt->payload, MAX_PAYLOAD); // `input_io` populates `payload` field
+        pkt->length = htons(payload_size);
+
+        pkt->win = htons(MIN_WINDOW);
+        pkt->flags = SYN;
+        pkt->unused = 0;
+        pkt->flags |= set_parity(pkt);
+
+        // send SYN packet to server (client is now blocked until it receives SYN-ACK)
+        sendto(sockfd, pkt, sizeof(packet) + payload_size, 0, (struct sockaddr*) addr, addr_len);
+        print_diag(pkt, SEND);
+
+        // step 4: client receives SYN-ACK from server (client now unblocked)
+        recvfrom(sockfd, pkt, BUF_SIZE, 0, (struct sockaddr*) addr, &addr_len);
+        print_diag(pkt, RECV);
+        if (!(pkt->flags & SYN) || !(pkt->flags & ACK)) {
+            print("Expected SYN-ACK packet. Dropping...\n");
+            exit(1);
+        }
+
+        // step 5: client sends ACK to server to complete handshake
+        server_seq = ntohs(pkt->seq);
+        pkt->seq = htons(client_seq + 1);
+        pkt->ack = htons(server_seq + 1);
+
+        // read payload data (if available)
+        payload_size = input_p(pkt->payload, MAX_PAYLOAD);
+        pkt->length = htons(payload_size);
+
+        pkt->win = htons(MIN_WINDOW);
+        pkt->flags = ACK;
+        pkt->unused = 0;
+        pkt->flags |= set_parity(pkt);
+
+        // send final ACK packet to server (handshake complete)
+        sendto(sockfd, pkt, sizeof(packet) + payload_size, 0, (struct sockaddr*) addr, addr_len);
+        print_diag(pkt, SEND);
+    } else if (type == SERVER) {
+        // step 2: server receives SYN packet from client
+
+        // server is blocked until it receives SYN from client
+        recvfrom(sockfd, pkt, BUF_SIZE, 0, (struct sockaddr*) addr, &addr_len);
+        print_diag(pkt, RECV);
+        if (!(pkt->flags & SYN)) {
+            print("Expected SYN packet. Dropping...\n");
+            exit(1);
+        }
+        
+        // step 3: server sends SYN-ACK to client
+        client_seq = ntohs(pkt->seq);
+        server_seq = (rand() % 1000) + 1;
+        pkt->seq = htons(server_seq);
+        pkt->ack = htons(client_seq + 1); // ACK = client_seq + 1
+
+        // read payload data (if available)
+        payload_size = input_p(pkt->payload, MAX_PAYLOAD); // `input_io` populates `payload` field
+        pkt->length = htons(payload_size);
+        
+        pkt->win = htons(MIN_WINDOW);
+        pkt->flags = SYN | ACK;
+        pkt->unused = 0;
+        pkt->flags |= set_parity(pkt);
+
+        // send SYN-ACK packet to client (server is now blocked until it receives ACK)
+        sendto(sockfd, pkt, sizeof(packet) + payload_size, 0, (struct sockaddr*) addr, addr_len);
+        print_diag(pkt, SEND);
+    }
+
+    int flags = fcntl(sockfd, F_GETFL);
+    flags |= O_NONBLOCK;
+    fcntl(sockfd, F_SETFL, flags);
+
+    bool client_connected = false;
+
+    while (true) {
+        // 1. Receive data from socket
+        int bytes_recvd = recvfrom(sockfd, buffer, BUF_SIZE, 0, (struct sockaddr*)addr, &addr_len);
+        if (type == SERVER) {
+            if (bytes_recvd <= 0 && !client_connected)
+                continue; // server waiting for a client connection
+            if (bytes_recvd > 0)
+                client_connected = true; // server received data from client
+        }
+        if (bytes_recvd > 0)
+            output_p(buffer, bytes_recvd); // write data to stdout
+        
+        // 2. Read from stdin
+        int bytes_read = input_p(buffer, BUF_SIZE);
+        if (bytes_read > 0)
+            sendto(sockfd, buffer, bytes_read, 0, (struct sockaddr*)addr, addr_len);
+    }
+}
+*/
