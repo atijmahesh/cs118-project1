@@ -26,8 +26,9 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
         pkt->length = htons(payload_size);
 
         pkt->win = htons(MIN_WINDOW);
-        pkt->flags = SYN | set_parity(pkt);
+        pkt->flags = SYN;
         pkt->unused = 0;
+        pkt->flags |= set_parity(pkt);
 
         // send SYN packet to server (client is now blocked until it receives SYN-ACK)
         sendto(sockfd, pkt, sizeof(packet) + payload_size, 0, (struct sockaddr*) addr, addr_len);
@@ -51,8 +52,9 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
         pkt->length = htons(payload_size);
 
         pkt->win = htons(MIN_WINDOW);
-        pkt->flags = ACK | set_parity(pkt);
+        pkt->flags = ACK;
         pkt->unused = 0;
+        pkt->flags |= set_parity(pkt);
 
         // send final ACK packet to server (handshake complete)
         sendto(sockfd, pkt, sizeof(packet) + payload_size, 0, (struct sockaddr*) addr, addr_len);
@@ -79,8 +81,9 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
         pkt->length = htons(payload_size);
         
         pkt->win = htons(MIN_WINDOW);
-        pkt->flags = SYN | ACK | set_parity(pkt);
+        pkt->flags = SYN | ACK;
         pkt->unused = 0;
+        pkt->flags |= set_parity(pkt);
 
         // send SYN-ACK packet to client (server is now blocked until it receives ACK)
         sendto(sockfd, pkt, sizeof(packet) + payload_size, 0, (struct sockaddr*) addr, addr_len);
