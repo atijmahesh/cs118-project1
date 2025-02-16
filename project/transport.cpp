@@ -135,6 +135,7 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
 
         uint16_t pkt_seq = ntohs(pkt->seq);
         uint16_t pkt_len = ntohs(pkt->length);
+        window_size = ntohs(pkt->win);
         
         // process in-order packets
         if (pkt_seq == ack_num) {
@@ -150,5 +151,25 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
         // buffer out-of-order packets
         else if (pkt_seq > ack_num)
             recv_buf[pkt_seq] = *pkt;
+
+        // send new data if window is not full
+        if (send_buf.size() < window_size / MAX_PAYLOAD) {
+            packet new_pkt = {};
+            new_pkt.seq = htons(seq_num);
+            new_pkt.ack = htons(ack_num);
+            
+            // read from stdin into payload
+            payload_size = input_p(new_pkt.payload, MAX_PAYLOAD);
+            if (payload_size == 0) continue; // no more data to send
+
+            new_pkt.length = htons(payload_size);
+            new_pkt.win = htons(window_size);
+            new_pkt.flags = set_parity(&new_pkt);
+
+             // store packet in send buffer then send it
+            send_buf[seq_num] = new_pkt;
+            sendto(sockfd, &new_pkt, sizeof(packet) + payload_size, 0, (struct sockaddr*) addr, addr_len);
+            print_diag(&new_pkt, SEND);
+        }
     }
 }
