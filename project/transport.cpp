@@ -108,7 +108,7 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
     unordered_map<uint16_t, packet> send_buf; // stores unACKed packets
     map<uint16_t, packet> recv_buf; // stores out-of-order packets
     uint16_t window_size = MIN_WINDOW; // window size, static for now (TODO: implement flow control)
-    
+
     while (true) {
         // receive packet from sender
         int bytes_recvd = recvfrom(sockfd, pkt, BUF_SIZE, 0, (struct sockaddr*) addr, &addr_len);
@@ -120,5 +120,18 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
             print("Corrupt packet detected. Dropping...\n");
             continue;
         }
+
+        // if received packet is an ACK, remove all packets from send buffer up to (but not including) ACK number
+        if (pkt->flags & ACK) {
+            uint16_t pkt_ack = ntohs(pkt->ack);
+            auto it = send_buf.begin();
+            while (it != send_buf.end()) {
+                if (it->first < pkt_ack)
+                    it = send_buf.erase(it);
+                else
+                    it++;
+            }
+        }
+        
     }
 }
