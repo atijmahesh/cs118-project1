@@ -125,6 +125,7 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
     // Variables for duplicate ACK detection.
     uint16_t last_ack_val = ack_num;  // Last advanced ACK value.
     int dup_ack_counter = 0;          // Count of duplicate ACKs.
+    bool dup_ack_sent = false; 
 
     while (true) {
         // receive packet from sender
@@ -169,6 +170,7 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
                     if (pkt_seq == ack_num) {
                         output_p(pkt->payload, pkt_len);
                         ++ack_num;
+                        dup_ack_sent = false;
                         while (recv_buf.find(ack_num) != recv_buf.end()) {
                             packet &buf_pkt = recv_buf[ack_num];
                             uint16_t buf_len = ntohs(buf_pkt.length);
@@ -188,8 +190,23 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
                                (struct sockaddr*) addr, addr_len);
                         print_diag(&ack_pkt, SEND);
                     }
-                    else if (pkt_seq > ack_num)
+                    else if (pkt_seq > ack_num) {
                         recv_buf[pkt_seq] = *pkt;
+                        // Only send one duplicate ACK for the current gap.
+                        if (!dup_ack_sent) {
+                            packet dup_ack_pkt = {};
+                            dup_ack_pkt.seq = 0; // empty ACK packet
+                            dup_ack_pkt.ack = htons(ack_num);
+                            dup_ack_pkt.length = 0;
+                            dup_ack_pkt.win = htons(window_size);
+                            dup_ack_pkt.flags = ACK;
+                            dup_ack_pkt.flags |= set_parity(&dup_ack_pkt);
+                            sendto(sockfd, &dup_ack_pkt, sizeof(packet), 0,
+                                (struct sockaddr*) addr, addr_len);
+                            print_diag(&dup_ack_pkt, SEND);
+                            dup_ack_sent = true;
+                        }
+                    }
                 }
             }
         }
