@@ -21,7 +21,7 @@ void retransmit_lowest_packet(int sockfd, struct sockaddr_in* addr, unordered_ma
                 lowest_seq = kv.first;
         packet &lowest_pkt = send_buf[lowest_seq];
         sendto(sockfd, &lowest_pkt, sizeof(packet) + ntohs(lowest_pkt.length), 0, (struct sockaddr*) addr, sizeof(*addr));
-        // Log retransmission reason
+        // log retransmission reason
         print_diag(&lowest_pkt, reason);
     }
 }
@@ -119,14 +119,8 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
     flags |= O_NONBLOCK;
     fcntl(sockfd, F_SETFL, flags);
 
-    uint16_t seq_num, ack_num;
-    if (type == CLIENT) {
-        seq_num = client_seq + 2;
-        ack_num = server_seq + 1;
-    } else {
-        seq_num = server_seq + 1;
-        ack_num = client_seq + 1;
-    }
+    uint16_t seq_num = (type == CLIENT) ? (client_seq + 2) : (server_seq + 1);
+    uint16_t ack_num = (type == CLIENT) ? (server_seq + 1) : (client_seq + 1);
 
     unordered_map<uint16_t, packet> send_buf; // stores unACKed packets
     map<uint16_t, packet> recv_buf; // stores out-of-order packets
