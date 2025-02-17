@@ -101,7 +101,10 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
     }
 
     // make socket nonblocking after handshake is completed
-    init_fd(sockfd);
+    int flags = fcntl(sockfd, F_GETFL);
+    flags |= O_NONBLOCK;
+    fcntl(sockfd, F_SETFL, flags);
+
     uint16_t seq_num, ack_num;
     if (type == CLIENT) {
         seq_num = client_seq + 2;

@@ -71,7 +71,7 @@ static inline int bit_count(packet* pkt) {
 }
 
 // Helpers
-static inline void print(char* txt) {
+static inline void print(const char* txt) {
     fprintf(stderr, "%s\n", txt);
 }
 
@@ -110,12 +110,6 @@ static inline void print_diag(packet* pkt, int diag) {
         }
     }
     fprintf(stderr, "\n");
-}
-
-static void init_fd(int sock_fd) {
-    int flags = fcntl(sock_fd, F_GETFL);
-    flags |= O_NONBLOCK;
-    fcntl(sock_fd, F_SETFL, flags);
 }
 
 static inline uint8_t calc_pbit(packet* pkt) {
