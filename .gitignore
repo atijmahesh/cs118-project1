@@ -3,3 +3,5 @@ client
 server
 .DS_Store
 *.o
+project.zip
+.vscode
