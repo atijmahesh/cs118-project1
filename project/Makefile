@@ -1,5 +1,5 @@
 CXX=g++
-CPPFLAGS=-Wall -Wextra 
+CPPFLAGS=-Wall -Wextra -g
 LDFLAGS=
 LDLIBS=
 
