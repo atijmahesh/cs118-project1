@@ -8,6 +8,7 @@
 #include <map>
 #include <set>
 #include <cstring>
+#include <sys/time.h>
 #include "consts.h"
 
 using namespace std;
@@ -113,6 +114,10 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
     unordered_map<uint16_t, packet> send_buf; // stores unACKed packets
     map<uint16_t, packet> recv_buf; // stores out-of-order packets
     uint16_t window_size = MIN_WINDOW; // window size, static for now (TODO: implement flow control)
+    
+    struct timeval last_ack_timestamp, cur_time; // start timers
+    gettimeofday(&last_ack_timestamp, nullptr); // updated on each ACK received
+    gettimeofday(&cur_time, nullptr); // updated on each iteration of loop
 
     while (true) {
         // receive packet from sender
@@ -181,5 +186,7 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
                 ++seq_num;
             }
         }
+
+        // check timeout
     }
 }
