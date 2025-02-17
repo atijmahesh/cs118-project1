@@ -9,7 +9,8 @@
 #include <set>
 #include <cstring>
 #include <sys/time.h>
-#include <climits> 
+#include <climits>
+#include <algorithm> 
 #include "consts.h"
 
 using namespace std;
@@ -120,7 +121,8 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
 
     unordered_map<uint16_t, SendPacketEntry> send_buf; // stores unACKed packets
     map<uint16_t, packet> recv_buf; // stores out-of-order packets
-    uint16_t window_size = MIN_WINDOW; // window size, static for now (TODO: implement flow control)
+    uint16_t min_window = MIN_WINDOW;
+    uint16_t window_size = MAX_PAYLOAD;
 
     // Variables for duplicate ACK detection.
     uint16_t last_ack_val = ack_num;  // Last advanced ACK value.
@@ -164,7 +166,7 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
 
                 uint16_t pkt_seq = ntohs(pkt->seq);
                 uint16_t pkt_len = ntohs(pkt->length);
-                window_size = ntohs(pkt->win);
+                min_window = ntohs(pkt->win);
 
                 if (pkt_len > 0) {
                     if (pkt_seq == ack_num) {
@@ -177,6 +179,11 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
                             output_p(buf_pkt.payload, buf_len);
                             recv_buf.erase(ack_num);
                             ++ack_num;
+                        }
+
+                        // Increase our advertised window by 500 bytes each time, up to MAX_WINDOW.
+                        if (window_size < MAX_WINDOW) {
+                            window_size = min<uint16_t>(window_size + 500, static_cast<uint16_t>(MAX_WINDOW));
                         }
 
                         packet ack_pkt = {};
@@ -211,23 +218,22 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
             }
         }
 
-        // 2. Timer-based retransmission: Check the oldest unacked packet
-        if (!send_buf.empty()) {
-            auto it = send_buf.begin();
-            struct timeval current_time;
-            gettimeofday(&current_time, NULL);
-            long elapsed_usec = TV_DIFF(current_time, it->second.last_sent);
-            if (elapsed_usec >= RTO) {  // If 1 second has passed.
-                uint16_t len = ntohs(it->second.pkt.length);
-                sendto(sockfd, &it->second.pkt, sizeof(packet) + len, 0,
+        // 2. Timer-based retransmission: Check all unacked packets.
+        struct timeval current_time;
+        gettimeofday(&current_time, NULL);
+        for (auto &entry : send_buf) {
+            long elapsed_usec = TV_DIFF(current_time, entry.second.last_sent);
+            if (elapsed_usec >= RTO) {  // If RTO has passed.
+                uint16_t len = ntohs(entry.second.pkt.length);
+                sendto(sockfd, &entry.second.pkt, sizeof(packet) + len, 0,
                        (struct sockaddr*) addr, addr_len);
-                print_diag(&it->second.pkt, RTOS);
-                gettimeofday(&it->second.last_sent, NULL);
+                print_diag(&entry.second.pkt, RTOS);
+                gettimeofday(&entry.second.last_sent, NULL);
             }
         }
 
         // 3. Send new packets if the window allows.
-        if (send_buf.size() < (window_size / MAX_PAYLOAD)) {
+        if (send_buf.size() < (min_window / MAX_PAYLOAD)) {
             uint8_t local_buffer[BUF_SIZE] = {0};
             packet* p = reinterpret_cast<packet*>(local_buffer);
             uint16_t n = input_p(p->payload, MAX_PAYLOAD);
