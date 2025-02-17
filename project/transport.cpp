@@ -13,6 +13,20 @@
 
 using namespace std;
 
+void retransmit_lowest_packet(int sockfd, struct sockaddr_in* addr, unordered_map<uint16_t, packet>& send_buf, int reason) {
+    if (!send_buf.empty()) {
+        uint16_t lowest_seq = send_buf.begin()->first;
+        for (auto &kv : send_buf)
+            if (kv.first < lowest_seq)
+                lowest_seq = kv.first;
+        packet &lowest_pkt = send_buf[lowest_seq];
+        sendto(sockfd, &lowest_pkt, sizeof(packet) + ntohs(lowest_pkt.length), 0, (struct sockaddr*) addr, sizeof(*addr));
+        // Log retransmission reason
+        print_diag(&lowest_pkt, reason);
+    }
+}
+
+
 // Main function of transport layer; never quits
 void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input_p)(uint8_t*, size_t), void (*output_p)(uint8_t*, size_t)) {
     uint8_t buffer[BUF_SIZE] = {0};
@@ -143,19 +157,9 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
                     } else if (pkt_ack == last_ack) {
                         // duplicate ACK
                         ++dup_acks;
-                        if (dup_acks == DUP_ACKS) {
+                        if (dup_acks == DUP_ACKS)
                             // fast retransmit
-                            if (!send_buf.empty()) {
-                                uint16_t lowest_seq = send_buf.begin()->first;
-                                for (auto &kv : send_buf)
-                                    if (kv.first < lowest_seq)
-                                        lowest_seq = kv.first;
-                                packet &lowest_pkt = send_buf[lowest_seq];
-                                sendto(sockfd, &lowest_pkt, sizeof(packet) + ntohs(lowest_pkt.length), 0, (struct sockaddr*) addr, addr_len);
-                                // no resetting RTO timer for dup ACKs
-                                print_diag(&lowest_pkt, DUPS);
-                            }
-                        }
+                            retransmit_lowest_packet(sockfd, addr, send_buf, DUPS);
                     }
                     // remove ACKed packets from send buffer
                     auto it = send_buf.begin();
@@ -222,16 +226,7 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
         // check if RTO timer has expired
         gettimeofday(&cur_time, nullptr);
         long diff_usec = TV_DIFF(cur_time, last_ack_timestamp);
-        if (diff_usec >= RTO) {
-            if (!send_buf.empty()) {
-                uint16_t lowest_seq = send_buf.begin()->first;
-                for (auto &kv : send_buf)
-                    if (kv.first < lowest_seq)
-                        lowest_seq = kv.first;
-                packet &lowest_pkt = send_buf[lowest_seq];
-                sendto(sockfd, &lowest_pkt, sizeof(packet) + ntohs(lowest_pkt.length), 0, (struct sockaddr*) addr, addr_len);
-                print_diag(&lowest_pkt, RTOS);
-            }
-        }
+        if (diff_usec >= RTO)
+            retransmit_lowest_packet(sockfd, addr, send_buf, RTOS);
     }
 }
