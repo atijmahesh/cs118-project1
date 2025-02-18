@@ -15,10 +15,12 @@ function show_help() {
     echo "  zip          Prepare a ZIP file for submission."
     echo "  clean        Clean up build artifacts."
     echo "  help         Show this help message."
+    echo "  capture       Individually run tests and dump the traffic to a file."
 }
 
 # Function to pull the latest container and handle updates
 function ensure_container() {
+    mkdir -p dumps # make sure dumps exists
     echo "Pulling the latest container for $NAME..."
     if docker pull "$NAME" | grep -q "Downloaded newer image"; then
         docker rm -f project1_instance
@@ -28,7 +30,7 @@ function ensure_container() {
     CONTAINER_ID=$(docker ps -a -q --filter "name=project1_instance")
     if [ -z "$CONTAINER_ID" ]; then
         echo "No existing container found. Creating a new one..."
-        docker create --name project1_instance --cap-add=SYS_PTRACE --security-opt seccomp=unconfined -v "$(pwd)/project:/autograder/submission" -v "$(pwd)/results:/autograder/results" --entrypoint tail "$NAME" -f /dev/null
+        docker create --name project1_instance --cap-add=SYS_PTRACE --security-opt seccomp=unconfined -v "$(pwd)/project:/autograder/submission" -v "$(pwd)/results:/autograder/results" -v "$(pwd)/dumps:/dumps" --entrypoint tail "$NAME" -f /dev/null
         CONTAINER_ID=$(docker ps -a -q --filter "name=project1_instance")
     fi
 
@@ -51,23 +53,37 @@ function run_autograder() {
     docker exec "$CONTAINER_ID" bash -c "/autograder/run_autograder 2> /dev/null && cat /autograder/results/results.json"
 }
 
-# Function to run a specific test 
-function run_test() {
-    CMD="python3 -m unittest "
+# Function to select specific test based on arguments
+function select_test(){
+    CMD="python3 -m unittest " # this is global
 
     case "$1" in
         compile)
             CMD+="test_0_compilation.TestCompilation"
             ;;
         handshake)
-            CMD+="test_1_handshake.TestHandshake."
-            CMD+=$2
+            if [[ $2 = "all" ]]; then
+                CMD+="test_1_handshake.TestHandshake"
+            else
+                CMD+="test_1_handshake.TestHandshake."
+                CMD+=$2
+            fi
             ;;
         rdt)
-            CMD+="test_2_reliable_data_transport.TestRDT."
-            CMD+=$2
+            if [[ $2 = "all" ]]; then
+                CMD+="test_2_reliable_data_transport.TestRDT"
+            else
+                CMD+="test_2_reliable_data_transport.TestRDT."
+                CMD+=$2
+            fi
             ;;
     esac
+}
+
+# Function to run a specific test 
+function run_test() {
+
+    select_test $1 $2
 
     ensure_container
     echo "Running test" $1 $2
@@ -99,6 +115,18 @@ function compile() {
     ensure_container
 
     docker exec -w /autograder/submission "$CONTAINER_ID" make 
+}
+
+function capture() {
+
+    select_test $1 $2
+
+    ensure_container
+
+    echo "Capturing on test" $1 $2
+
+    docker exec "$CONTAINER_ID" bash -c "apt install -y tcpdump" # Could also be added to Dockerfile
+    docker exec -w /autograder/source/tests "$CONTAINER_ID" bash -c "tcpdump -i lo -w /dumps/file_$(date +\"%Y-%m-%d_%H-%M-%S\")_$1_$2.pcap & $CMD && sleep 2 && killall tcpdump" # The killall flushes the write buffer
 }
 
 # Function to clean up build artifacts
@@ -154,10 +182,12 @@ case "$1" in
     help)
         show_help
         ;;
+    capture)
+        capture $2 $3
+        ;;
     *)
         echo "Error: Unknown command '$1'"
         show_help
         exit 1
         ;;
 esac
-
