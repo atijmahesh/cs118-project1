@@ -7,14 +7,16 @@
 #include <fcntl.h>
 
 // Maximum payload size
+#define PACKET_SIZE 12
 #define MAX_PAYLOAD 1012
-#define BUF_SIZE sizeof(packet) + MAX_PAYLOAD
+#define BUF_SIZE PACKET_SIZE + MAX_PAYLOAD
 
 // Retransmission time
 #define TV_DIFF(end, start)                                                    \
     (end.tv_sec * 1000000) - (start.tv_sec * 1000000) + end.tv_usec -          \
         start.tv_usec
-#define RTO 1000000
+#define RTO 3000
+
 #define MIN(a, b) (a > b ? b : a)
 #define MAX(c, d) (c > d ? c : d)
 
@@ -47,13 +49,13 @@ typedef struct {
     uint16_t win;
     uint16_t flags; // LSb 0 SYN, LSb 1 ACK, LSb 2 Parity
     uint16_t unused;
-    uint8_t payload[0];
+    uint8_t payload[MAX_PAYLOAD];
 } packet;
 
 // Bit counter
 static inline int bit_count(packet* pkt) {
     uint8_t* bytes = (uint8_t*) pkt;
-    int len = sizeof(packet) + MIN(MAX_PAYLOAD, ntohs(pkt->length));
+    int len = PACKET_SIZE + MIN(MAX_PAYLOAD, ntohs(pkt->length));
     int count = 0;
 
     for (int i = 0; i < len; i++) {
@@ -115,7 +117,7 @@ static inline void print_diag(packet* pkt, int diag) {
 static inline uint8_t calc_pbit(packet* pkt) {
     uint8_t* data = reinterpret_cast<uint8_t*>(pkt);
     uint8_t parity = 0;
-    int len = sizeof(packet) + MIN(MAX_PAYLOAD, ntohs(pkt->length));
+    int len = PACKET_SIZE + MIN(MAX_PAYLOAD, ntohs(pkt->length));
     for (int i = 0; i < len; ++i) {
         uint8_t byte = data[i];
         for (int b = 0; b < 8; ++b)

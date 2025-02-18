@@ -20,7 +20,7 @@ void retransmit_lowest_packet(int sockfd, struct sockaddr_in* addr, unordered_ma
             if (kv.first < lowest_seq)
                 lowest_seq = kv.first;
         packet &lowest_pkt = send_buf[lowest_seq];
-        sendto(sockfd, &lowest_pkt, sizeof(packet) + ntohs(lowest_pkt.length), 0, (struct sockaddr*) addr, sizeof(*addr));
+        sendto(sockfd, &lowest_pkt, PACKET_SIZE + ntohs(lowest_pkt.length), 0, (struct sockaddr*) addr, sizeof(*addr));
         // log retransmission reason
         print_diag(&lowest_pkt, reason);
     }
@@ -29,8 +29,7 @@ void retransmit_lowest_packet(int sockfd, struct sockaddr_in* addr, unordered_ma
 
 // Main function of transport layer; never quits
 void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input_p)(uint8_t*, size_t), void (*output_p)(uint8_t*, size_t)) {
-    uint8_t buffer[BUF_SIZE] = {0};
-    packet* pkt = reinterpret_cast<packet*>(buffer);
+    packet* pkt = new packet();
     socklen_t addr_len = sizeof(struct sockaddr_in);
     size_t payload_size = 0;
     uint16_t client_seq = 0, server_seq = 0;
@@ -51,7 +50,7 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
         pkt->flags |= set_parity(pkt);
 
         // send SYN packet to server (client is now blocked until it receives SYN-ACK)
-        sendto(sockfd, pkt, sizeof(packet) + payload_size, 0, (struct sockaddr*) addr, addr_len);
+        sendto(sockfd, pkt, PACKET_SIZE + payload_size, 0, (struct sockaddr*) addr, addr_len);
         print_diag(pkt, SEND);
 
         // step 4: client receives SYN-ACK from server (client now unblocked)
@@ -79,7 +78,7 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
         pkt->flags |= set_parity(pkt);
 
         // send final ACK packet to server (handshake complete)
-        sendto(sockfd, pkt, sizeof(packet) + payload_size, 0, (struct sockaddr*) addr, addr_len);
+        sendto(sockfd, pkt, PACKET_SIZE + payload_size, 0, (struct sockaddr*) addr, addr_len);
         print_diag(pkt, SEND);
     } else if (type == SERVER) {
         // step 2: server receives SYN packet from client
@@ -110,7 +109,7 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
         pkt->flags |= set_parity(pkt);
 
         // send SYN-ACK packet to client (server is now blocked until it receives ACK)
-        sendto(sockfd, pkt, sizeof(packet) + payload_size, 0, (struct sockaddr*) addr, addr_len);
+        sendto(sockfd, pkt, PACKET_SIZE + payload_size, 0, (struct sockaddr*) addr, addr_len);
         print_diag(pkt, SEND);
     }
 
@@ -130,6 +129,7 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
     gettimeofday(&last_ack_timestamp, nullptr); // updated on each ACK received
     gettimeofday(&cur_time, nullptr); // updated on each iteration of loop
 
+    uint16_t last_seq = 0;
     uint16_t last_ack = ack_num; // start at whatever ACK is after handshake
     uint16_t dup_acks = 0;
 
@@ -143,17 +143,12 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
                 // if packet is ACK from other side
                 if (pkt->flags & ACK) {
                     // check if ACK advances `last_ack`
-                    if (pkt_ack > last_ack) {
-                        // brand new ACK that moves forward
+                    if (pkt_ack > last_ack) { // brand new ACK that moves forward
                         last_ack = pkt_ack;
                         dup_acks = 0;
-                        gettimeofday(&last_ack_timestamp, nullptr); // reset RTO timer
-                    } else if (pkt_ack == last_ack) {
-                        // duplicate ACK
+                    } else if (pkt_ack == last_ack) { // duplicate ACK
                         ++dup_acks;
-                        if (dup_acks == DUP_ACKS)
-                            // fast retransmit
-                            retransmit_lowest_packet(sockfd, addr, send_buf, DUPS);
+                        last_seq = ntohs(pkt->seq);
                     }
                     // remove ACKed packets from send buffer
                     auto it = send_buf.begin();
@@ -189,7 +184,7 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
                         ack_pkt.win = htons(window_size);
                         ack_pkt.flags = ACK;
                         ack_pkt.flags |= set_parity(&ack_pkt);
-                        sendto(sockfd, &ack_pkt, sizeof(packet), 0, (struct sockaddr*) addr, addr_len);
+                        sendto(sockfd, &ack_pkt, PACKET_SIZE, 0, (struct sockaddr*) addr, addr_len);
                         print_diag(&ack_pkt, SEND);
                     }
                     else if (pkt_seq > ack_num)
@@ -200,19 +195,17 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
         }
         
         if (send_buf.size() < (window_size / MAX_PAYLOAD)) {
-            uint8_t buffer[BUF_SIZE] = {0};
-            packet* p = reinterpret_cast<packet*>(buffer);
-            uint16_t n = input_p(p->payload, MAX_PAYLOAD);
-            if (n > 0) {
-                p->seq = htons(seq_num);
-                p->ack = htons(ack_num);
-                p->length = htons(n);
-                p->win = htons(window_size);
-                p->flags = 0;
-                p->flags |= set_parity(p);
-                send_buf[seq_num] = *p;
-                sendto(sockfd, p, sizeof(packet) + n, 0, (struct sockaddr*) addr, addr_len);
-                print_diag(p, SEND);
+            payload_size = input_p(pkt->payload, MAX_PAYLOAD);
+            if (payload_size > 0) {
+                pkt->seq = htons(seq_num);
+                pkt->ack = htons(ack_num);
+                pkt->length = htons(payload_size);
+                pkt->win = htons(window_size);
+                pkt->flags = ACK;
+                pkt->flags |= set_parity(pkt);
+                send_buf[seq_num] = *pkt;
+                sendto(sockfd, pkt, PACKET_SIZE + payload_size, 0, (struct sockaddr*) addr, addr_len);
+                print_diag(pkt, SEND);
                 ++seq_num;
             }
         }
@@ -220,7 +213,24 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int type, ssize_t (*input
         // check if RTO timer has expired
         gettimeofday(&cur_time, nullptr);
         long diff_usec = TV_DIFF(cur_time, last_ack_timestamp);
-        if (diff_usec >= RTO)
+        if (diff_usec >= RTO) {
             retransmit_lowest_packet(sockfd, addr, send_buf, RTOS);
+            gettimeofday(&last_ack_timestamp, nullptr); // reset RTO timer
+        }
+
+        // check if must fast retransmit
+        if (dup_acks >= DUP_ACKS) {
+            dup_acks = 0;
+            // retransmit a seq=0 ack packet
+            packet ack_pkt = {};
+            ack_pkt.seq = 0; // empty ACK packets can't have a SEQ #
+            ack_pkt.ack = htons(last_seq + 1);
+            ack_pkt.length = 0;
+            ack_pkt.win = htons(window_size);
+            ack_pkt.flags = ACK;
+            ack_pkt.flags |= set_parity(&ack_pkt);
+            sendto(sockfd, &ack_pkt, PACKET_SIZE, 0, (struct sockaddr*) addr, sizeof(*addr));
+            print_diag(&ack_pkt, SEND);
+        }
     }
 }
